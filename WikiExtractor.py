@@ -539,7 +539,7 @@ class Extractor(object):
         self.recursion_exceeded_3_errs = 0  # parameter recursion
         self.template_title_errs = 0
 
-    def write_output(self, out, text):
+    def write_output(self, out, text, headers, anchors):
         """
         :param out: a memory file
         :param text: the text of the page
@@ -550,7 +550,9 @@ class Extractor(object):
                 'id': self.id,
                 'url': url,
                 'title': self.title,
-                'text': "\n".join(text)
+                'text': "\n".join(text),
+                'headers' : headers,
+                'anchors' : anchors
             }
             if options.print_revision:
                 json_data['revid'] = self.revid
@@ -627,14 +629,17 @@ class Extractor(object):
         # $text = $frame->expand( $dom );
         #
         text = self.transform(text)
-        text = self.wiki2text(text)
-        text = compact(self.clean(text))
+        text, anchors = self.wiki2text(text)
+
+
+        text, headers = compact(self.clean(text))
+
         text = [title_str] + text
         
         if sum(len(line) for line in text) < options.min_text_length:
             return
         
-        self.write_output(out, text)
+        self.write_output(out, text, headers, anchors)
         
         errs = (self.template_title_errs,
                 self.recursion_exceeded_1_errs,
@@ -708,7 +713,7 @@ class Extractor(object):
         text = text.replace("'''", '').replace("''", '"')
 
         # replace internal links
-        text = replaceInternalLinks(text)
+        text, anchors = replaceInternalLinks(text)
 
         # replace external links
         text = replaceExternalLinks(text)
@@ -725,7 +730,7 @@ class Extractor(object):
             res += unescape(text[cur:m.start()]) + m.group(1)
             cur = m.end()
         text = res + unescape(text[cur:])
-        return text
+        return text, anchors
 
 
     def clean(self, text):
@@ -2097,6 +2102,7 @@ def replaceInternalLinks(text):
     # triple closing ]]].
     cur = 0
     res = ''
+    anchors = []
     for s, e in findBalanced(text):
         m = tailRE.match(text, e)
         if m:
@@ -2121,9 +2127,10 @@ def replaceInternalLinks(text):
                     pipe = last  # advance
                 curp = e1
             label = inner[pipe + 1:].strip()
+        anchors.append(((title, label)))
         res += text[cur:s] + makeInternalLink(title, label) + trail
         cur = end
-    return res + text[cur:]
+    return res + text[cur:], anchors
 
 
 # the official version is a method in class Parser, similar to this:
@@ -2514,6 +2521,7 @@ def compact(text):
 
     page = []             # list of paragraph
     headers = {}          # Headers for unfilled sections
+    store_headers = []    # Headers to be returned with page
     emptySection = False  # empty sections are discarded
     listLevel = []        # nesting of lists
     listCount = []        # count of each list (it should be always in the same length of listLevel)
@@ -2541,6 +2549,7 @@ def compact(text):
             if title and title[-1] not in '!?':
                 title += '.'    # terminate sentence.
             headers[lev] = title
+            store_headers.append(title)
             # drop previous headers
             for i in list(headers.keys()):
                 if i > lev:
@@ -2630,7 +2639,7 @@ def compact(text):
             # Drop preformatted
             if line[0] != ' ':  # dangerous
                 page.append(line)
-    return page
+    return page, store_headers
 
 
 def handle_unicode(entity):
